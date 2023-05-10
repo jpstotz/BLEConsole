@@ -59,7 +59,7 @@ namespace BLEConsole
         {
             // Get app name and version
             var name = Assembly.GetCallingAssembly().GetName();
-            _versionInfo = string.Format($"{name.Name} ver. {name.Version.Major:0}.{name.Version.Minor:0}.{name.Version.Build:0}\n");
+            _versionInfo = string.Format($"{name.Name} ver. {name.Version.Major:0}.{name.Version.Minor:0}.{name.Version.Build:0} JPS 2023-04-20\n");
             if (!Console.IsInputRedirected) Console.WriteLine(_versionInfo);
 
             // Set Ctrl+Break/Ctrl+C handler
@@ -185,7 +185,7 @@ namespace BLEConsole
                 }
                 catch (Exception error)
                 {
-                    Console.WriteLine(error.Message);
+                    Console.WriteLine($"{error.Message} ({error.GetType()})");
                 }
 
                 // We should wait for a little after writing
@@ -1126,9 +1126,47 @@ namespace BLEConsole
                             // First, check for existing subscription
                             if (!_subscribers.Contains(attr.characteristic))
                             {
-                                var status = await attr.characteristic.WriteClientCharacteristicConfigurationDescriptorAsync(GattClientCharacteristicConfigurationDescriptorValue.Notify);
-                                if (status == GattCommunicationStatus.Success)
+                                BluetoothLEAttributeDisplay charToDisplay = new BluetoothLEAttributeDisplay(attr.characteristic);
+                                var statusNotify = GattCommunicationStatus.ProtocolError;
+                                if (!charToDisplay.CanNotify && !charToDisplay.CanIndicate)
                                 {
+                                    if (!Console.IsOutputRedirected)
+                                        Console.WriteLine($"Characteristic does not provide notifications or indications");
+                                    retVal += 1;
+                                    return retVal;
+                                }
+                                if (charToDisplay.CanNotify)
+                                {
+                                    try
+                                    {
+                                        statusNotify = await attr.characteristic.WriteClientCharacteristicConfigurationDescriptorAsync(GattClientCharacteristicConfigurationDescriptorValue.Notify);
+                                    } catch (Exception error)
+                                    {
+                                        if (!Console.IsOutputRedirected)
+                                            Console.WriteLine($"Failed to subscribe to notification - ${error.Message}");
+                                    }
+                                }
+                                var statusIndicate = GattCommunicationStatus.ProtocolError;
+                                if (charToDisplay.CanIndicate)
+                                {
+                                    try
+                                    {
+                                        statusIndicate = await attr.characteristic.WriteClientCharacteristicConfigurationDescriptorAsync(GattClientCharacteristicConfigurationDescriptorValue.Indicate);
+                                    } catch (Exception error)
+                                    {
+                                        if (!Console.IsOutputRedirected)
+                                            Console.WriteLine($"Failed to subscribe to indication - {error.Message}");
+                                    }
+                                }
+                                if (statusNotify == GattCommunicationStatus.Success || statusIndicate == GattCommunicationStatus.Success)
+                                {
+                                    if (!Console.IsOutputRedirected)
+                                    {
+                                        if (statusNotify == GattCommunicationStatus.Success) 
+                                            Console.WriteLine($"Subscribed to characteristic {useName} (notify)");
+                                        if (statusIndicate == GattCommunicationStatus.Success)
+                                            Console.WriteLine($"Subscribed to characteristic {useName} (indicate)");
+                                    }
                                     _subscribers.Add(attr.characteristic);
                                     attr.characteristic.ValueChanged += Characteristic_ValueChanged;
                                 }
@@ -1195,9 +1233,26 @@ namespace BLEConsole
             // Unsubscribe from all value changed events
             else if (param.Replace("/", "").ToLower().Equals("all"))
             {
+                if (!Console.IsOutputRedirected)
+                    Console.Write($"Removing all {_subscribers.Count()} subscription(s)\n");
                 foreach (var sub in _subscribers)
                 {
-                    await sub.WriteClientCharacteristicConfigurationDescriptorAsync(GattClientCharacteristicConfigurationDescriptorValue.None);
+                    BluetoothLEAttributeDisplay charToDisplay = new BluetoothLEAttributeDisplay(sub);
+                    Console.Write($"Unsubscribing from {charToDisplay.Name}\n");
+                    try
+                    {
+                        var status = await sub.WriteClientCharacteristicConfigurationDescriptorAsync(GattClientCharacteristicConfigurationDescriptorValue.None);
+                        if (status != GattCommunicationStatus.Success)
+                        {
+                            Console.Write($"Failed to unsubscribe from {charToDisplay.Name}\n");
+                        } else
+                        {
+                            Console.Write($"Unsubscribed from {charToDisplay.Name}\n");
+                        }
+                    } catch (Exception error)
+                    {
+                        Console.Write($"Failed to unsubscribe from {charToDisplay.Name}: {error.Message}\n");
+                    }
                     sub.ValueChanged -= Characteristic_ValueChanged;
                 }
                 _subscribers.Clear();
@@ -1205,7 +1260,7 @@ namespace BLEConsole
             // unsubscribe from specific event
             else
             {
-
+                Console.Write("Unsupported - use unsubs all\n");
             }
         }
 
